@@ -1,57 +1,81 @@
-import random
-from datetime import datetime
-from typing import List, Optional, Dict, Any
+import os
+from dotenv import load_dotenv
+from fastapi import FastAPI, Depends
+from sqlalchemy.orm import Session
 
-# SQLAlchemy imports for database ORM
-from sqlalchemy import (
-    create_engine,
-    Column,
-    Integer,
-    String,
-    Float,
-    DateTime,
-    BigInteger,
+# --- Load Environment Variables ---
+# This must be done before components access os.getenv()
+load_dotenv()
+
+# Import components from Infrastructure and Application layers
+from infrastructure.database import SessionLocal, create_db_and_tables
+from infrastructure.repository import CountryRepository
+from infrastructure.clients import (
+    RestCountriesClient,
+    ExchangeRateClient,
+    ImageGenerator,
 )
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy.orm.session import Session
+from application.services import CountryService
 
-# --- Configuration (Mocking .env load) ---
-# In a real app, this would be loaded from .env
-SQLALCHEMY_DATABASE_URL = "sqlite:///./sql_app.db"  # Persistent SQLite for demo
-# For MySQL, it would be: "mysql+pymysql://user:password@host/dbname"
+# Import Router from Presentation layer
+from api.router import router
 
-# Database setup
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+
+# --- FastAPI App Initialization ---
+app = FastAPI(
+    title="Country Currency & Exchange API",
+    description="A RESTful service for cached country and exchange rate data.",
+    version="1.0.0",
 )
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-# --- Database Models (Entities) ---
 
 
-class Country(Base):
-    """Database model for country data cache."""
-
-    __tablename__ = "countries"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, index=True, nullable=False)
-    capital = Column(String, nullable=True)
-    region = Column(String, nullable=True)
-    population = Column(BigInteger, nullable=False)
-    currency_code = Column(String, nullable=True)
-    exchange_rate = Column(Float, nullable=True)
-    estimated_gdp = Column(Float, nullable=True)
-    flag_url = Column(String, nullable=True)
-    last_refreshed_at = Column(DateTime, nullable=False)
+# --- Database Dependency (Infrastructure) ---
+def get_db():
+    """Dependency function that yields a database session."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
-class Status(Base):
-    """Database model for global API status tracking."""
+# --- Service Dependency Injection (Application) ---
+def get_country_service(db: Session = Depends(get_db)) -> CountryService:
+    """Dependency that creates and returns the CountryService instance."""
+    # 1. Instantiate Infrastructure components (they read config from env)
+    repository = CountryRepository(db=db)
+    countries_client = RestCountriesClient()
+    exchange_client = ExchangeRateClient()
+    image_generator = ImageGenerator()
 
-    __tablename__ = "status"
+    # 2. Instantiate Application component (Service) with all dependencies injected
+    service = CountryService(
+        repository=repository,
+        countries_client=countries_client,
+        exchange_client=exchange_client,
+        image_generator=image_generator,
+    )
+    return service
 
-    id = Column(Integer, primary_key=True)
-    total_countries = Column(Integer, default=0)
-    last_refreshed_at = Column(DateTime, default=datetime.min)
+
+# Inject the service dependency override into the router
+router.dependency_overrides[router.dependencies[0]] = get_country_service
+
+
+# --- Startup Hook ---
+@app.on_event("startup")
+def on_startup():
+    """Executed when the FastAPI application starts."""
+    # 1. Initialize the database schema
+    print("Creating database and tables...")
+    create_db_and_tables()
+    print("Database ready.")
+
+
+# --- Include Router ---
+app.include_router(router)
+
+# To run this locally using the configured port:
+# API_PORT is loaded from .env
+# uvicorn app.main:app --host 0.0.0.0 --port
+# (You'll need to use os.getenv('API_PORT') to dynamically set the port when executing uvicorn.)

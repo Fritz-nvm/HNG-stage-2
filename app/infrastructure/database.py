@@ -1,11 +1,14 @@
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# --- Configuration (Mocking .env load) ---
-# Use a persistent SQLite file for the demo, easily swap with MySQL config
-SQLALCHEMY_DATABASE_URL = "sqlite:///./sql_app.db"
+# --- Configuration (Loaded from .env) ---
+# Retrieve the database connection URL from environment variables
+SQLALCHEMY_DATABASE_URL = os.getenv("DB_URL", "sqlite:///./default.db")
 
 # Database setup
+# connect_args={"check_same_thread": False} is required for SQLite only
+# For MySQL, this should be omitted.
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
 )

@@ -9,7 +9,11 @@ from app.domain.entities import Country
 from app.domain.repositories import AbstractCountryPersistence
 from app.infrastructure.models import CountryModel
 from sqlalchemy.orm import Session
-from app.domain.exceptions import DomainError  # <-- This line is needed!
+from app.domain.exceptions import DomainError
+from datetime import datetime
+from typing import Optional, Tuple
+from sqlalchemy import func
+
 import os
 from dotenv import load_dotenv
 
@@ -77,6 +81,21 @@ class SQLCountryRepository(AbstractCountryPersistence):
 
         self.db.bulk_save_objects(models_to_save)
         self.db.commit()
+
+    def get_status(self) -> Tuple[int, Optional[datetime]]:
+        """
+        Uses the injected session (self.db) to get the total count and max timestamp.
+        """
+        # CRITICAL FIX: Use the injected session instance (self.db) directly
+        result = self.db.query(
+            func.count(CountryModel.id).label("count"),
+            func.max(CountryModel.last_refreshed_at).label("last_refreshed"),
+        ).one()
+
+        total_countries = result.count
+        last_refreshed_at = result.last_refreshed
+
+        return total_countries, last_refreshed_at
 
 
 class OpenERAPIAdapter(AbstractCurrencyService):

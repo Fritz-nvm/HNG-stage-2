@@ -118,3 +118,19 @@ class RefreshCountriesService:
         self.persistence_repo.save_countries(countries)
 
         return len(countries)
+
+
+class GetStatusService:
+    def __init__(self, persistence_repo: AbstractCountryPersistence):
+        """Injects the dependency (Persistence Port)."""
+        self.persistence_repo = persistence_repo
+
+    def execute(self) -> dict:
+        """Retrieves and formats the API status data."""
+        total_countries, last_refreshed_at = self.persistence_repo.get_status()
+
+        # Format the result to match the required output keys
+        return {
+            "total_countries": total_countries,
+            "last_refreshed_at": last_refreshed_at,
+        }

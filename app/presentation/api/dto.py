@@ -20,3 +20,9 @@ class CountryResponse(BaseModel):
     class Config:
         orm_mode = True
         allow_population_by_field_name = True
+
+
+class StatusResponse(BaseModel):
+    total_countries: int
+    # Optional because the table might be empty, resulting in a NULL timestamp
+    last_refreshed_at: Optional[datetime] = None

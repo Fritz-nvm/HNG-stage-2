@@ -4,13 +4,17 @@ from fastapi import status
 
 # Imports from core layers
 from app.domain.entities import Country
-from app.application.services import FetchCountriesService, RefreshCountriesService
+from app.application.services import (
+    FetchCountriesService,
+    RefreshCountriesService,
+    GetStatusService,
+)
 from app.infrastructure.repositories import (
     RestCountriesAdapter,
     SQLCountryRepository,
     OpenERAPIAdapter,
 )
-from app.presentation.api.dto import CountryResponse
+from app.presentation.api.dto import CountryResponse, StatusResponse
 from app.infrastructure.DI import get_db
 from app.domain.repositories import (
     AbstractCountryPersistence,
@@ -18,6 +22,7 @@ from app.domain.repositories import (
     AbstractCurrencyService,
 )
 from sqlalchemy.orm import Session
+from app.config import get_db_session
 
 
 router = APIRouter()
@@ -26,6 +31,15 @@ router = APIRouter()
 # Currency Service Adapter
 def get_currency_service() -> AbstractCurrencyService:
     return OpenERAPIAdapter()  # <-- The new adapter
+
+
+# --- Persistence Dependency ---
+def get_country_persistence_repo(
+    # The session is now injected by the new provider function
+    db_session: Session = Depends(get_db_session),
+) -> AbstractCountryPersistence:
+    """Provides the concrete database repository."""
+    return SQLCountryRepository(db_session=db_session)
 
 
 def get_country_data_source() -> AbstractCountryDataSource:
@@ -37,6 +51,15 @@ def get_country_data_source() -> AbstractCountryDataSource:
     with the concrete Adapter (the external HTTP detail).
     """
     return RestCountriesAdapter()
+
+
+def get_status_service(
+    persistence_repo: AbstractCountryPersistence = Depends(
+        get_country_persistence_repo
+    ),
+) -> GetStatusService:
+    """Provides the GetStatusService instance."""
+    return GetStatusService(persistence_repo=persistence_repo)
 
 
 # --- Dependency Injection Configuration ---
@@ -88,3 +111,12 @@ def refresh_country_data(
 ):
     count = service.execute()
     return {"message": f"Successfully refreshed and saved {count} countries."}
+
+
+@router.get("/status", response_model=StatusResponse, status_code=status.HTTP_200_OK)
+def get_api_status(service: GetStatusService = Depends(get_status_service)):
+    """
+    Retrieves the total number of countries and the last refresh timestamp.
+    """
+    # The service returns a dict, which FastAPI validates against StatusResponse
+    return service.execute()

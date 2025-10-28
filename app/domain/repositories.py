@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
 from app.domain.entities import Country
+from datetime import datetime
+from typing import Optional, Tuple
 
 
 class AbstractCountryPersistence(ABC):
@@ -16,6 +18,15 @@ class AbstractCountryPersistence(ABC):
     @abstractmethod
     def get_all_countries(self) -> List[Country]:
         """Retrieves all Country entities."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_status(self) -> Tuple[int, Optional[datetime]]:
+        """
+        Retrieves the total number of countries and the latest
+        last_refreshed_at timestamp.
+        Returns: (total_count, last_refreshed_at)
+        """
         raise NotImplementedError
 
 

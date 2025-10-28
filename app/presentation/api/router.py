@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends
-from typing import List
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import List, Optional
 from fastapi import status
 
 # Imports from core layers
@@ -8,6 +8,9 @@ from app.application.services import (
     FetchCountriesService,
     RefreshCountriesService,
     GetStatusService,
+    DeleteCountryService,
+    GetCountryByNameService,
+    GetCountriesService,
 )
 from app.infrastructure.repositories import (
     RestCountriesAdapter,
@@ -28,11 +31,6 @@ from app.config import get_db_session
 router = APIRouter()
 
 
-# Currency Service Adapter
-def get_currency_service() -> AbstractCurrencyService:
-    return OpenERAPIAdapter()  # <-- The new adapter
-
-
 # --- Persistence Dependency ---
 def get_country_persistence_repo(
     # The session is now injected by the new provider function
@@ -40,6 +38,32 @@ def get_country_persistence_repo(
 ) -> AbstractCountryPersistence:
     """Provides the concrete database repository."""
     return SQLCountryRepository(db_session=db_session)
+
+
+# Currency Service Adapter
+def get_currency_service() -> AbstractCurrencyService:
+    return OpenERAPIAdapter()  # <-- The new adapter
+
+
+# --- DI for GET /countries ---
+def get_countries_service(
+    repo: AbstractCountryPersistence = Depends(get_country_persistence_repo),
+) -> GetCountriesService:
+    return GetCountriesService(repo=repo)
+
+
+# --- DI for GET /countries/:name ---
+def get_country_by_name_service(
+    repo: AbstractCountryPersistence = Depends(get_country_persistence_repo),
+) -> GetCountryByNameService:
+    return GetCountryByNameService(repo=repo)
+
+
+# --- DI for DELETE /countries/:name ---
+def get_delete_country_service(
+    repo: AbstractCountryPersistence = Depends(get_country_persistence_repo),
+) -> DeleteCountryService:
+    return DeleteCountryService(repo=repo)
 
 
 def get_country_data_source() -> AbstractCountryDataSource:
@@ -92,17 +116,54 @@ def get_refresh_service(
 
 # --- FastAPI Endpoint ---
 @router.get("/countries", response_model=List[CountryResponse])
-def get_all_countries_data(
-    # Now depends on the Persistence Repository
-    persistence_repo: AbstractCountryPersistence = Depends(
-        get_country_persistence_repo
+def list_countries(
+    region: Optional[str] = Query(None, description="Filter by region (e.g., Africa)"),
+    currency: Optional[str] = Query(
+        None, description="Filter by currency code (e.g., NGN)"
     ),
+    sort: Optional[str] = Query(
+        None, description="Sort order: 'gdp_desc' or 'pop_desc'"
+    ),
+    service: GetCountriesService = Depends(get_countries_service),
 ):
-    # 1. Call the Persistence Port to get stored data
-    countries_entities: List[Country] = persistence_repo.get_all_countries()
+    # Construct filters dictionary only with non-None values
+    filters = {}
+    if region:
+        filters["region"] = region
+    if currency:
+        filters["currency"] = currency
 
-    # 2. Return the list of Entities
-    return countries_entities
+    return service.execute(filters=filters, sort=sort)
+
+
+@router.get("/countries/{name}", response_model=CountryResponse)
+def get_country_by_name(
+    name: str,
+    service: GetCountryByNameService = Depends(get_country_by_name_service),
+):
+    country = service.execute(name=name)
+    if not country:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Country '{name}' not found."
+        )
+    return country
+
+
+# --- DELETE /countries/:name (Delete One) ---
+@router.delete("/countries/{name}", status_code=status.HTTP_200_OK)
+def delete_country_by_name(
+    name: str,
+    service: DeleteCountryService = Depends(get_delete_country_service),
+):
+    success = service.execute(name=name)
+    if not success:
+        # If the service returns False, the country was not found
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Country '{name}' not found for deletion.",
+        )
+
+    return {"message": f"Successfully deleted country: {name}"}
 
 
 @router.post("/countries/refresh", status_code=status.HTTP_200_OK)

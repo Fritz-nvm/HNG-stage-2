@@ -98,6 +98,33 @@ class FetchCountriesService:
         return countries
 
 
+class GetCountriesService:
+    def __init__(self, repo: AbstractCountryPersistence):
+        self.repo = repo
+
+    def execute(self, filters: dict, sort: Optional[str]) -> List[Country]:
+        """Fetches all countries applying optional filters and sorting."""
+        return self.repo.get_countries(filters=filters, sort_by=sort)
+
+
+class GetCountryByNameService:
+    def __init__(self, repo: AbstractCountryPersistence):
+        self.repo = repo
+
+    def execute(self, name: str) -> Optional[Country]:
+        """Fetches a single country by name."""
+        return self.repo.get_country_by_name(name)
+
+
+class DeleteCountryService:
+    def __init__(self, repo: AbstractCountryPersistence):
+        self.repo = repo
+
+    def execute(self, name: str) -> bool:
+        """Deletes a country record by name."""
+        return self.repo.delete_country_by_name(name)
+
+
 class RefreshCountriesService:
     def __init__(
         self,

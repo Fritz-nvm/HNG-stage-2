@@ -52,23 +52,51 @@ class SQLCountryRepository(AbstractCountryPersistence):
     def __init__(self, db_session: Session):
         self.db = db_session
 
-    def get_all_countries(self) -> List[Country]:
-        """Retrieves all Models, converts them back to Entities."""
-        models = self.db.query(CountryModel).all()
+    # --- NEW METHOD: GET ALL COUNTRIES (with filters/sorting) ---
+    def get_countries(self, filters: dict, sort_by: Optional[str]) -> List[Country]:
+        query = self.db.query(CountryModel)
 
-        countries: List[Country] = []
-        for model in models:
-            # 1. Get the dictionary representation of the Model
-            model_data = model.__dict__
+        # 1. Apply Filters
+        if "region" in filters:
+            query = query.filter(CountryModel.region == filters["region"])
+        if "currency" in filters:
+            query = query.filter(CountryModel.currency_code == filters["currency"])
 
-            # 2. **CRITICAL FIX:** Remove the SQLAlchemy internal metadata key
-            #    The .pop() method safely removes the key if it exists.
-            model_data.pop("_sa_instance_state", None)
+        # 2. Apply Sorting
+        if sort_by == "gdp_desc":
+            # Use desc() for descending order; nullsfirst ensures null GDP values are last
+            query = query.order_by(CountryModel.estimated_gdp.desc().nullsfirst())
+        elif sort_by == "pop_desc":
+            query = query.order_by(CountryModel.population.desc())
+        # Add other sorting options as needed
 
-            # 3. Create the Domain Entity using the cleaned data
-            countries.append(Country(**model_data))
+        # 3. Execute and Convert
+        models = query.all()
+        return [self._to_entity(model) for model in models]
 
-        return countries
+    # --- NEW METHOD: GET ONE COUNTRY BY NAME ---
+    def get_country_by_name(self, name: str) -> Optional[Country]:
+        model = self.db.query(CountryModel).filter(CountryModel.name == name).first()
+        if model:
+            return self._to_entity(model)
+        return None
+
+    # --- NEW METHOD: DELETE COUNTRY BY NAME ---
+    def delete_country_by_name(self, name: str) -> bool:
+        # Use a filter and the delete method
+        delete_count = (
+            self.db.query(CountryModel)
+            .filter(CountryModel.name == name)
+            .delete(
+                synchronize_session="fetch"  # Ensures session state is updated immediately
+            )
+        )
+
+        # ⚠️ CRITICAL: Must commit the change for DELETE operations
+        self.db.commit()
+
+        # Returns True if one or more rows were deleted
+        return delete_count > 0
 
     def save_countries(self, countries: List[Country]) -> None:
         """Converts Entities to Models and saves them to the DB."""
@@ -96,6 +124,27 @@ class SQLCountryRepository(AbstractCountryPersistence):
         last_refreshed_at = result.last_refreshed
 
         return total_countries, last_refreshed_at
+
+    def _to_entity(self, model: CountryModel) -> Country:
+        """Converts an SQLAlchemy CountryModel instance to a Domain Country Entity."""
+        if model is None:
+            return None  # Should not happen here, but good practice
+
+        return Country(
+            # Core Fields
+            id=model.id,
+            name=model.name,
+            population=model.population,
+            # Optional Fields (must match Entity definition)
+            currency_code=model.currency_code,
+            exchange_rate=model.exchange_rate,
+            estimated_gdp=model.estimated_gdp,
+            # Other Fields
+            capital=model.capital,
+            region=model.region,
+            flag_url=model.flag_url,
+            last_refreshed_at=model.last_refreshed_at,
+        )
 
 
 class OpenERAPIAdapter(AbstractCurrencyService):

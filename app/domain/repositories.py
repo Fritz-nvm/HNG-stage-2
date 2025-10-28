@@ -16,11 +16,6 @@ class AbstractCountryPersistence(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_all_countries(self) -> List[Country]:
-        """Retrieves all Country entities."""
-        raise NotImplementedError
-
-    @abstractmethod
     def get_status(self) -> Tuple[int, Optional[datetime]]:
         """
         Retrieves the total number of countries and the latest

@@ -10,9 +10,9 @@ class Country:
 
     name: str
     population: int
-    currency_code: str
-    exchange_rate: float
-    estimated_gdp: float
+    currency_code: Optional[str] = None
+    exchange_rate: Optional[float] = None
+    estimated_gdp: Optional[float] = None
 
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
 

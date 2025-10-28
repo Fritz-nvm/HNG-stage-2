@@ -5,22 +5,52 @@ from fastapi import status
 # Imports from core layers
 from app.domain.entities import Country
 from app.application.services import FetchCountriesService, RefreshCountriesService
-from app.infrastructure.repositories import RestCountriesAdapter, SQLCountryRepository
+from app.infrastructure.repositories import (
+    RestCountriesAdapter,
+    SQLCountryRepository,
+    OpenERAPIAdapter,
+)
 from app.presentation.api.dto import CountryResponse
 from app.infrastructure.DI import get_db
-from app.domain.repositories import AbstractCountryPersistence
+from app.domain.repositories import (
+    AbstractCountryPersistence,
+    AbstractCountryDataSource,
+    AbstractCurrencyService,
+)
 from sqlalchemy.orm import Session
 
 
 router = APIRouter()
 
 
+# Currency Service Adapter
+def get_currency_service() -> AbstractCurrencyService:
+    return OpenERAPIAdapter()  # <-- The new adapter
+
+
+def get_country_data_source() -> AbstractCountryDataSource:
+    """
+    Dependency function that creates and returns the concrete Adapter
+    for fetching raw country data.
+
+    This function is the 'bridge' that connects the abstract Port (what the Use Case needs)
+    with the concrete Adapter (the external HTTP detail).
+    """
+    return RestCountriesAdapter()
+
+
 # --- Dependency Injection Configuration ---
 # In a real app, this would be cleaner (as taught in Lesson 4)
-def get_fetch_countries_service() -> FetchCountriesService:
-    """Configures the Use Case with the concrete Adapter."""
-    data_adapter = RestCountriesAdapter()
-    return FetchCountriesService(data_source=data_adapter)
+def get_fetch_countries_service(
+    data_source: AbstractCountryDataSource = Depends(get_country_data_source),
+    currency_service: AbstractCurrencyService = Depends(
+        get_currency_service
+    ),  # <-- NEW INJECTION
+) -> FetchCountriesService:
+    return FetchCountriesService(
+        data_source=data_source,
+        currency_service=currency_service,  # <-- Passed to the Use Case
+    )
 
 
 # --- DI for Persistence ---
@@ -55,7 +85,6 @@ def get_all_countries_data(
 @router.post("/countries/refresh", status_code=status.HTTP_200_OK)
 def refresh_country_data(
     service: RefreshCountriesService = Depends(get_refresh_service),
-    exchange_rate: float = 1.0,
 ):
-    count = service.execute(exchange_rate=exchange_rate)
+    count = service.execute()
     return {"message": f"Successfully refreshed and saved {count} countries."}

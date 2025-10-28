@@ -1,51 +1,93 @@
 import random
 import uuid
-from typing import List
+from typing import List, Optional
 from app.domain.entities import Country
-from app.domain.repositories import AbstractCountryDataSource
-from app.domain.repositories import AbstractCountryPersistence
+from app.domain.repositories import (
+    AbstractCountryDataSource,
+    AbstractCountryPersistence,
+    AbstractCurrencyService,
+)
+from app.domain.exceptions import DomainError
 
 
 class FetchCountriesService:
-    def __init__(self, data_source: AbstractCountryDataSource):
-        """Injects the dependency (the Port/Adapter)."""
+    def __init__(
+        self,
+        data_source: AbstractCountryDataSource,
+        currency_service: AbstractCurrencyService,
+    ):
         self.data_source = data_source
+        self.currency_service = currency_service
 
-    def execute(self, exchange_rate: float = 1.0) -> List[Country]:
-        """
-        Business Logic: Fetches raw data, computes GDP, and creates Entities.
-        """
+    def execute(self) -> List[Country]:
         raw_data = self.data_source.fetch_all_countries_raw()
         countries: List[Country] = []
+        cached_rates = {}
 
         for item in raw_data:
-            # --- Data Requirements & Validation ---
+            # --- 1. DATA EXTRACTION & VALIDATION ---
             name = item.get("name")
-            population = item.get("population")
+            population = item.get(
+                "population"
+            )  # CRITICAL: Ensure population is extracted
             currencies = item.get("currencies")
 
-            # Basic Validation/Filtering (Business Rule)
-            if not name or population is None or not currencies:
+            # Basic Validation: Skip record if essential data is missing
+            if not name or population is None or population < 0:
+                print(f"WARN: Skipping record due to invalid name/population: {name}")
                 continue
 
-            # Since the API only returns one currency, we'll take the first one
-            currency_code = (
-                currencies[0].get("code") if currencies[0].get("code") else "N/A"
-            )
+            # Initialize optional/dynamic fields to None for the current loop iteration
+            currency_code: Optional[str] = None
+            exchange_rate: Optional[float] = None
+            estimated_gdp: Optional[float] = None
 
-            # --- Business Computation ---
-            # computed from population × random(1000–2000) ÷ exchange_rate
-            gdp_factor = random.uniform(1000, 2000)
-            estimated_gdp = (population * gdp_factor) / exchange_rate
+            # --- 2. CURRENCY EXTRACTION AND EMPTY ARRAY HANDLING ---
 
-            # --- Create the Core Entity ---
+            # Rule: If multiple currencies, store the first one.
+            if currencies and len(currencies) > 0 and currencies[0].get("code"):
+                currency_code = currencies[0].get("code")
+            else:
+                # Rule: If currencies array is empty or codes are missing:
+                currency_code = None
+                exchange_rate = None  # Explicitly set to null (None)
+                estimated_gdp = 0.0  # Set estimated_gdp to 0 as required
+                # Logic skips to step 4 (Create Entity)
+
+            # --- 3. EXCHANGE RATE LOOKUP & FAILURE HANDLING ---
+
+            # Only proceed if a currency code was successfully extracted
+            if currency_code:
+
+                try:
+                    # Get rate from cache or call external service
+                    if currency_code not in cached_rates:
+                        rate = self.currency_service.get_exchange_rate(currency_code)
+                        cached_rates[currency_code] = rate
+                    else:
+                        rate = cached_rates[currency_code]
+
+                    # SUCCESS: Assign rate and compute GDP
+                    exchange_rate = rate
+                    gdp_factor = random.uniform(1000, 2000)
+                    estimated_gdp = (population * gdp_factor) / exchange_rate
+
+                except DomainError as e:
+                    # Rule: If currency_code is not found in the exchange rates API:
+                    # exchange_rate and estimated_gdp remain None (as initialized)
+                    print(
+                        f"WARN: Failed to get rate for {currency_code}. Storing nulls. Error: {e}"
+                    )
+                    pass  # Continue to step 4 with null values
+
+            # --- 4. CREATE THE CORE ENTITY ---
+            # This step always runs, fulfilling the "Still store the country record" rule.
             countries.append(
                 Country(
-                    id=str(uuid.uuid4()),
                     name=name,
                     population=population,
                     currency_code=currency_code,
-                    exchange_rate=exchange_rate,  # Using a fixed rate for now
+                    exchange_rate=exchange_rate,
                     estimated_gdp=estimated_gdp,
                     capital=item.get("capital"),
                     region=item.get("region"),
@@ -65,12 +107,12 @@ class RefreshCountriesService:
         self.fetch_service = fetch_service
         self.persistence_repo = persistence_repo
 
-    def execute(self, exchange_rate: float) -> int:
+    def execute(self) -> int:
         """
         Fetches data, saves it to the database, and returns the count.
         """
         # 1. FETCH data using the data source Port/Adapter
-        countries = self.fetch_service.execute(exchange_rate=exchange_rate)
+        countries = self.fetch_service.execute()
 
         # 2. PERSIST data using the persistence Port/Adapter
         self.persistence_repo.save_countries(countries)

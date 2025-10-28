@@ -10,9 +10,9 @@ class CountryResponse(BaseModel):
     capital: Optional[str]
     region: Optional[str]
     population: int
-    currency_code: str
-    exchange_rate: float
-    estimated_gdp: float
+    currency_code: Optional[str] = None
+    exchange_rate: Optional[float] = None
+    estimated_gdp: Optional[float] = None
     flag_url: Optional[str]
     last_refreshed_at: datetime
 

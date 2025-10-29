@@ -36,13 +36,11 @@ from app.config import get_db_session
 router = APIRouter()
 
 
-# --- Persistence Dependency ---
+# --- DI for Persistence (Renamed to match definition) ---
 def get_country_persistence_repo(
-    # The session is now injected by the new provider function
-    db_session: Session = Depends(get_db_session),
-) -> AbstractCountryPersistence:
-    """Provides the concrete database repository."""
-    return SQLCountryRepository(db_session=db_session)
+    db: Session = Depends(get_db),
+):  # Assuming get_db is defined elsewhere
+    return SQLCountryRepository(db_session=db)
 
 
 # Currency Service Adapter
@@ -105,44 +103,45 @@ def get_fetch_countries_service(
     )
 
 
-# --- DI for Persistence ---
-def get_country_persistence_repo(db: Session = Depends(get_db)):
-    return SQLCountryRepository(db_session=db)
-
-
-def get_refresh_service(
-    fetch_service: FetchCountriesService = Depends(get_fetch_countries_service),
-    persistence_repo: AbstractCountryPersistence = Depends(
-        get_country_persistence_repo
-    ),
-) -> RefreshCountriesService:
-    return RefreshCountriesService(fetch_service, persistence_repo)
-
-
+# --- DI for Image Generation ---
 def get_image_generator() -> AbstractImageGenerator:
     """Provides the concrete Pillow implementation."""
     return PillowImageAdapter()
 
 
-# Update RefreshCountriesService dependency to include the new port
+# --- Dependency Injection Configuration for Refresh Service ---
 def get_refresh_countries_service(
     fetch_service: FetchCountriesService = Depends(get_fetch_countries_service),
     persistence_repo: AbstractCountryPersistence = Depends(
-        get_country_persistence_repo
+        get_country_persistence_repo  # ✅ Use the consistent dependency name
     ),
-    # Ensure all existing dependencies are here
     # 💥 CRITICAL ADDITION 💥
     image_generator: AbstractImageGenerator = Depends(get_image_generator),
 ) -> RefreshCountriesService:
     """
     Provides the RefreshCountriesService instance with all required dependencies.
     """
-    # 💥 CRITICAL FIX: PASS THE NEW ARGUMENT 💥
+    # 💥 CRITICAL FIX: PASS ALL REQUIRED ARGUMENTS 💥
     return RefreshCountriesService(
         fetch_service=fetch_service,
         persistence_repo=persistence_repo,
         image_generator=image_generator,  # <-- Must pass the new dependency
-        # ... include any other required arguments here
+    )
+
+
+def get_refresh_service(
+    fetch_service: FetchCountriesService = Depends(
+        get_fetch_countries_service
+    ),  # Assuming this dependency exists
+    persistence_repo: AbstractCountryPersistence = Depends(
+        get_country_persistence_repo
+    ),  # Assuming this dependency exists
+    # 💥 CRITICAL FIX: Add the missing image generator dependency
+    image_generator: AbstractImageGenerator = Depends(get_image_generator),
+):
+    # 💥 CRITICAL FIX: Pass all three required arguments to the constructor
+    return RefreshCountriesService(
+        fetch_service, persistence_repo, image_generator  # 👈 Now included
     )
 
 
@@ -199,11 +198,14 @@ def delete_country_by_name(
 
 
 @router.post("/countries/refresh", status_code=status.HTTP_200_OK)
-def refresh_country_data(
+# 💥 CRITICAL FIX 1: Keep the router function ASYNC 💥
+async def refresh_data(
+    # 💥 CRITICAL FIX 2: Use the unified dependency provider name 💥
     service: RefreshCountriesService = Depends(get_refresh_countries_service),
 ):
-    count = service.execute()
-    return {"message": f"Successfully refreshed and saved {count} countries."}
+    # 💥 CRITICAL FIX 3: AWAIT the asynchronous service method 💥
+    count = await service.execute()
+    return {"message": f"Successfully refreshed {count} countries."}
 
 
 @router.get("/status", response_model=StatusResponse, status_code=status.HTTP_200_OK)

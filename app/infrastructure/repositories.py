@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Optional, Tuple
 from sqlalchemy import func
 from PIL import Image, ImageDraw, ImageFont
-
+import httpx
 import os
 from dotenv import load_dotenv
 
@@ -32,20 +32,23 @@ class RestCountriesAdapter(AbstractCountryDataSource):
         self.url = os.environ.get("COUNTRIES_API_URL")
         self.fields = "name,capital,region,population,flag,currencies"
 
-    def fetch_all_countries_raw(self) -> List[Dict[str, Any]]:
+    async def fetch_all_countries_raw(self) -> List[Dict[str, Any]]:  # ⬅️ Make it ASYNC
         """
-        Connects to the external API and returns the raw JSON data.
+        Connects to the external API and returns the raw JSON data using async HTTP.
         """
         try:
-            response = requests.get(self.url, params={"fields": self.fields})
-            response.raise_for_status()
+            # 💥 CRITICAL FIX: Use httpx.AsyncClient 💥
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    self.url, params={"fields": self.fields}
+                )  # ⬅️ AWAIT the call
 
+            response.raise_for_status()
             return response.json()
 
-        except requests.exceptions.RequestException as e:
-            # You should raise a DomainError here instead of printing
+        except httpx.RequestError as e:  # Catch async client errors
             print(f"Error fetching data from REST Countries: {e}")
-            return []  # Return empty list on failure for simplicity here
+            return []
 
 
 class SQLCountryRepository(AbstractCountryPersistence):
@@ -183,58 +186,71 @@ class OpenERAPIAdapter(AbstractCurrencyService):
         # Configuration detail
         self.url = os.environ.get("EXCHANGE_RATE_API_URL")
 
-    def get_exchange_rate(self, target_code: str) -> float:
+    async def get_exchange_rate(self, target_code: str) -> float:  # ⬅️ Make it ASYNC
         """
-        Fetches all rates and returns the specific target rate.
-        Note: Caches could be added here for performance, but we skip that for now.
+        Fetches all rates and returns the specific target rate using async HTTP.
         """
         try:
-            # We fetch all rates from the USD base endpoint once
-            response = requests.get(self.url)
+            # 💥 CRITICAL FIX: Use httpx.AsyncClient 💥
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(self.url)  # ⬅️ AWAIT the call
+
             response.raise_for_status()
             data = response.json()
 
-            # Error checking on the API response itself
+            # ... (rest of error checking and rate lookup logic) ...
+
             if data.get("result") != "success":
                 raise DomainError("External currency API reported failure.")
 
-            # Look up the rate from the fetched dictionary
             rates = data.get("rates", {})
 
-            # The rate from USD to USD is 1.0 (handled here for safety)
             if target_code == "USD":
                 return 1.0
 
             rate = rates.get(target_code.upper())
 
             if rate is None:
-                # If the currency code is invalid or missing in the response
                 raise DomainError(
                     f"Exchange rate not found for currency code: {target_code}"
                 )
 
             return float(rate)
 
-        except requests.exceptions.RequestException as e:
-            # Catch network errors and translate them to a Domain Error
+        except httpx.RequestError as e:  # Catch async client errors
             raise DomainError(f"External currency service unavailable or failed: {e}")
 
 
 class PillowImageAdapter(AbstractImageGenerator):
     CACHE_DIR = "cache"
-    IMAGE_PATH = os.path.join(CACHE_DIR, "summary.png")
+    # IMAGE_PATH = os.path.join(CACHE_DIR, "summary.png")
 
     def __init__(self):
-        # Ensure cache directory exists
-        os.makedirs(self.CACHE_DIR, exist_ok=True)
-        # Try to load a suitable font
-        self.font_path = "arial.ttf"  # Use a standard system font or provide one
+        # 1. Calculate the ABSOLUTE path based on project root
+        adapter_dir = os.path.dirname(os.path.abspath(__file__))
+        # Assuming 3 levels up to HNG root
+        project_root = os.path.abspath(os.path.join(adapter_dir, "..", "..", ".."))
+
+        # Define the absolute cache path
+        self._absolute_cache_path = os.path.join(project_root, self.CACHE_DIR)
+
+        # Define the absolute image path (for reliable retrieval)
+        self._absolute_image_path = os.path.join(
+            self._absolute_cache_path, "summary.png"
+        )
+
+        # 2. Ensure cache directory exists (using the absolute path)
+        os.makedirs(self._absolute_cache_path, exist_ok=True)
+
+        # 3. Font Loading (Needs the absolute path check)
+        potential_font_path = os.path.join(project_root, "arial.ttf")
+        self.font_path = potential_font_path
         if not os.path.exists(self.font_path):
-            # Fallback to default if Arial not found
             self.font_path = None
 
     def get_image_path(self) -> str:
-        return self.IMAGE_PATH
+        # ✅ FIX: Return the calculated ABSOLUTE path
+        return self._absolute_image_path
 
     # ... (Class and methods above this are unchanged) ...
 
@@ -304,5 +320,5 @@ class PillowImageAdapter(AbstractImageGenerator):
         )
 
         # 7. Save Image
-        image.save(self.IMAGE_PATH)
-        return self.IMAGE_PATH
+        image.save(self._absolute_image_path)
+        return self._absolute_image_path

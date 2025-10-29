@@ -7,10 +7,12 @@ click==8.3.0
 dotenv==0.9.9
 fastapi==0.120.0
 greenlet==3.2.4
+gunicorn==23.0.0
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
 idna==3.11
+packaging==25.0
 pillow==12.0.0
 pydantic==2.12.3
 pydantic_core==2.41.4

@@ -222,13 +222,38 @@ def get_api_status(service: GetStatusService = Depends(get_status_service)):
 def get_summary_image(generator: AbstractImageGenerator = Depends(get_image_generator)):
     image_path = generator.get_image_path()
 
-    if not os.path.exists(image_path):
+    # Convert to absolute path to fix local development issues
+    absolute_path = os.path.abspath(image_path)
+
+    print(f"Looking for image at: {absolute_path}")  # Debug info
+    print(f"File exists: {os.path.exists(absolute_path)}")  # Debug info
+
+    if not os.path.exists(absolute_path):
+        # Provide helpful debug information
+        print(f"DEBUG: Current working directory: {os.getcwd()}")
+        print(f"DEBUG: Relative path was: {image_path}")
+
+        # Check if cache directory exists
+        cache_dir = os.path.dirname(absolute_path)
+        if os.path.exists(cache_dir):
+            print(f"DEBUG: Cache directory exists. Contents: {os.listdir(cache_dir)}")
+        else:
+            print(f"DEBUG: Cache directory does not exist: {cache_dir}")
+
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content={
-                "error": "Summary image not found. Run POST /countries/refresh first."
+                "error": "Summary image not found. Run POST /countries/refresh first.",
+                "debug_info": {
+                    "requested_path": image_path,
+                    "absolute_path": absolute_path,
+                    "current_directory": os.getcwd(),
+                    "cache_directory_exists": os.path.exists(cache_dir),
+                },
             },
         )
 
     # Serve the file directly using FileResponse
-    return FileResponse(path=image_path, media_type="image/png", filename="summary.png")
+    return FileResponse(
+        path=absolute_path, media_type="image/png", filename="summary.png"
+    )

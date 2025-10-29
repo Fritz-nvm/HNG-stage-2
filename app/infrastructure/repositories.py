@@ -221,38 +221,34 @@ class OpenERAPIAdapter(AbstractCurrencyService):
             raise DomainError(f"External currency service unavailable or failed: {e}")
 
 
+import os
+from pathlib import Path
+
+
 class PillowImageAdapter(AbstractImageGenerator):
     CACHE_DIR = "cache"
-    # IMAGE_PATH = os.path.join(CACHE_DIR, "summary.png")
+    IMAGE_PATH = os.path.join(CACHE_DIR, "summary.png")
 
     def __init__(self):
-        # 1. Calculate the ABSOLUTE path based on project root
-        adapter_dir = os.path.dirname(os.path.abspath(__file__))
-        # Assuming 3 levels up to HNG root
-        project_root = os.path.abspath(os.path.join(adapter_dir, "..", "..", ".."))
+        # Convert to absolute paths to avoid relative path issues
+        self.absolute_cache_dir = os.path.abspath(self.CACHE_DIR)
+        self.absolute_image_path = os.path.abspath(self.IMAGE_PATH)
 
-        # Define the absolute cache path
-        self._absolute_cache_path = os.path.join(project_root, self.CACHE_DIR)
+        # Ensure cache directory exists with absolute path
+        os.makedirs(self.absolute_cache_dir, exist_ok=True)
 
-        # Define the absolute image path (for reliable retrieval)
-        self._absolute_image_path = os.path.join(
-            self._absolute_cache_path, "summary.png"
-        )
+        print(f"Cache directory: {self.absolute_cache_dir}")  # Debug
+        print(f"Image will be saved to: {self.absolute_image_path}")  # Debug
 
-        # 2. Ensure cache directory exists (using the absolute path)
-        os.makedirs(self._absolute_cache_path, exist_ok=True)
-
-        # 3. Font Loading (Needs the absolute path check)
-        potential_font_path = os.path.join(project_root, "arial.ttf")
-        self.font_path = potential_font_path
+        # Try to load a suitable font
+        self.font_path = "arial.ttf"  # Use a standard system font or provide one
         if not os.path.exists(self.font_path):
+            # Fallback to default if Arial not found
             self.font_path = None
 
     def get_image_path(self) -> str:
-        # ✅ FIX: Return the calculated ABSOLUTE path
-        return self._absolute_image_path
-
-    # ... (Class and methods above this are unchanged) ...
+        # Return the absolute path to ensure the endpoint can find it
+        return self.absolute_image_path
 
     def generate_summary_image(
         self,
@@ -309,7 +305,7 @@ class PillowImageAdapter(AbstractImageGenerator):
                 if country["estimated_gdp"] is not None
                 else "N/A"
             )
-            text = f"  {i+1}. {country['name']}: ${gdp_value}"
+            text = f" {i+1}. {country['name']}: ${gdp_value}"
             draw.text((30, y_offset + i * 25), text, fill="#555555", font=font_medium)
 
         # 6. Draw Footer (Timestamp)
@@ -319,6 +315,33 @@ class PillowImageAdapter(AbstractImageGenerator):
             (width - 300, height - 40), footer_text, fill="#666666", font=font_medium
         )
 
-        # 7. Save Image
-        image.save(self._absolute_image_path)
-        return self._absolute_image_path
+        # 7. Save Image with error handling and verification
+        try:
+            image.save(self.absolute_image_path)
+            print(f"✓ Image successfully saved to: {self.absolute_image_path}")
+
+            # Verify the file was created
+            if os.path.exists(self.absolute_image_path):
+                file_size = os.path.getsize(self.absolute_image_path)
+                print(f"✓ File verification passed: {file_size} bytes")
+            else:
+                print("✗ ERROR: File was not created at expected location")
+                # Try fallback location
+                fallback_path = os.path.abspath("summary_fallback.png")
+                image.save(fallback_path)
+                print(f"✓ Image saved to fallback location: {fallback_path}")
+                return fallback_path
+
+        except Exception as e:
+            print(f"✗ Error saving image: {e}")
+            # Try saving to current directory as last resort
+            try:
+                fallback_path = "summary_direct.png"
+                image.save(fallback_path)
+                print(f"✓ Image saved to direct location: {fallback_path}")
+                return os.path.abspath(fallback_path)
+            except Exception as e2:
+                print(f"✗ Critical error: Could not save image anywhere: {e2}")
+                return None
+
+        return self.absolute_image_path

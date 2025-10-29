@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+from fastapi.responses import JSONResponse, FileResponse
 from typing import List, Optional
 from fastapi import status
+import os
 
 # Imports from core layers
 from app.domain.entities import Country
@@ -16,6 +19,7 @@ from app.infrastructure.repositories import (
     RestCountriesAdapter,
     SQLCountryRepository,
     OpenERAPIAdapter,
+    PillowImageAdapter,
 )
 from app.presentation.api.dto import CountryResponse, StatusResponse
 from app.infrastructure.DI import get_db
@@ -23,6 +27,7 @@ from app.domain.repositories import (
     AbstractCountryPersistence,
     AbstractCountryDataSource,
     AbstractCurrencyService,
+    AbstractImageGenerator,
 )
 from sqlalchemy.orm import Session
 from app.config import get_db_session
@@ -114,6 +119,33 @@ def get_refresh_service(
     return RefreshCountriesService(fetch_service, persistence_repo)
 
 
+def get_image_generator() -> AbstractImageGenerator:
+    """Provides the concrete Pillow implementation."""
+    return PillowImageAdapter()
+
+
+# Update RefreshCountriesService dependency to include the new port
+def get_refresh_countries_service(
+    fetch_service: FetchCountriesService = Depends(get_fetch_countries_service),
+    persistence_repo: AbstractCountryPersistence = Depends(
+        get_country_persistence_repo
+    ),
+    # Ensure all existing dependencies are here
+    # 💥 CRITICAL ADDITION 💥
+    image_generator: AbstractImageGenerator = Depends(get_image_generator),
+) -> RefreshCountriesService:
+    """
+    Provides the RefreshCountriesService instance with all required dependencies.
+    """
+    # 💥 CRITICAL FIX: PASS THE NEW ARGUMENT 💥
+    return RefreshCountriesService(
+        fetch_service=fetch_service,
+        persistence_repo=persistence_repo,
+        image_generator=image_generator,  # <-- Must pass the new dependency
+        # ... include any other required arguments here
+    )
+
+
 # --- FastAPI Endpoint ---
 @router.get("/countries", response_model=List[CountryResponse])
 def list_countries(
@@ -168,7 +200,7 @@ def delete_country_by_name(
 
 @router.post("/countries/refresh", status_code=status.HTTP_200_OK)
 def refresh_country_data(
-    service: RefreshCountriesService = Depends(get_refresh_service),
+    service: RefreshCountriesService = Depends(get_refresh_countries_service),
 ):
     count = service.execute()
     return {"message": f"Successfully refreshed and saved {count} countries."}
@@ -181,3 +213,20 @@ def get_api_status(service: GetStatusService = Depends(get_status_service)):
     """
     # The service returns a dict, which FastAPI validates against StatusResponse
     return service.execute()
+
+
+# --- GET /countries/image ---
+@router.get("/countries/image")
+def get_summary_image(generator: AbstractImageGenerator = Depends(get_image_generator)):
+    image_path = generator.get_image_path()
+
+    if not os.path.exists(image_path):
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={
+                "error": "Summary image not found. Run POST /countries/refresh first."
+            },
+        )
+
+    # Serve the file directly using FileResponse
+    return FileResponse(path=image_path, media_type="image/png", filename="summary.png")

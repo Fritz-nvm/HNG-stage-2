@@ -4,6 +4,7 @@ from app.domain.repositories import (
     AbstractCountryPersistence,
     AbstractCountryDataSource,
     AbstractCurrencyService,
+    AbstractImageGenerator,
 )
 from app.domain.entities import Country
 from app.domain.repositories import AbstractCountryPersistence
@@ -13,6 +14,7 @@ from app.domain.exceptions import DomainError
 from datetime import datetime
 from typing import Optional, Tuple
 from sqlalchemy import func
+from PIL import Image, ImageDraw, ImageFont
 
 import os
 from dotenv import load_dotenv
@@ -98,17 +100,27 @@ class SQLCountryRepository(AbstractCountryPersistence):
         # Returns True if one or more rows were deleted
         return delete_count > 0
 
-    def save_countries(self, countries: List[Country]) -> None:
+    def save_countries(
+        self, countries: List[Country]
+    ) -> int:  # ⬅️ CHANGE RETURN TYPE TO INT
         """Converts Entities to Models and saves them to the DB."""
-        # Clear existing data (optional, for refresh)
+
+        # 1. Clear existing data (Typical for a full refresh)
         self.db.query(CountryModel).delete()
+        # Note: bulk operations often require two commits, one for delete, one for insert
         self.db.commit()
 
-        # Convert each Domain Entity to a SQLAlchemy Model instance
-        models_to_save = [CountryModel(**country.__dict__) for country in countries]
+        # 2. Convert and Track Count
+        # If you use bulk_save_objects, you can simply use len(countries) as the count.
+        models_to_save = [
+            self._to_model(country) for country in countries
+        ]  # ⬅️ Use _to_model helper
 
         self.db.bulk_save_objects(models_to_save)
         self.db.commit()
+
+        # 💥 CRITICAL FIX: Explicitly return the count
+        return len(models_to_save)
 
     def get_status(self) -> Tuple[int, Optional[datetime]]:
         """
@@ -144,6 +156,21 @@ class SQLCountryRepository(AbstractCountryPersistence):
             region=model.region,
             flag_url=model.flag_url,
             last_refreshed_at=model.last_refreshed_at,
+        )
+
+    def _to_model(self, entity: Country) -> CountryModel:
+        """Converts a Domain Country Entity to an SQLAlchemy CountryModel."""
+        return CountryModel(
+            id=entity.id,
+            name=entity.name,
+            population=entity.population,
+            currency_code=entity.currency_code,
+            exchange_rate=entity.exchange_rate,
+            estimated_gdp=entity.estimated_gdp,
+            capital=entity.capital,
+            region=entity.region,
+            flag_url=entity.flag_url,
+            last_refreshed_at=entity.last_refreshed_at,
         )
 
 
@@ -191,3 +218,91 @@ class OpenERAPIAdapter(AbstractCurrencyService):
         except requests.exceptions.RequestException as e:
             # Catch network errors and translate them to a Domain Error
             raise DomainError(f"External currency service unavailable or failed: {e}")
+
+
+class PillowImageAdapter(AbstractImageGenerator):
+    CACHE_DIR = "cache"
+    IMAGE_PATH = os.path.join(CACHE_DIR, "summary.png")
+
+    def __init__(self):
+        # Ensure cache directory exists
+        os.makedirs(self.CACHE_DIR, exist_ok=True)
+        # Try to load a suitable font
+        self.font_path = "arial.ttf"  # Use a standard system font or provide one
+        if not os.path.exists(self.font_path):
+            # Fallback to default if Arial not found
+            self.font_path = None
+
+    def get_image_path(self) -> str:
+        return self.IMAGE_PATH
+
+    # ... (Class and methods above this are unchanged) ...
+
+    def generate_summary_image(
+        self,
+        total_countries: int,
+        top_gdp_countries: List[Dict],
+        last_refreshed_at: datetime,
+    ) -> str:
+
+        # 1. Setup Image Canvas
+        width, height = 600, 400
+        background_color = "#f0f0f0"
+        image = Image.new("RGB", (width, height), background_color)
+        draw = ImageDraw.Draw(image)
+
+        # 2. Define Text Content and Font
+
+        # 💥 CRITICAL FIX START: Initialize with default fonts 💥
+        font_large = ImageFont.load_default()
+        font_medium = ImageFont.load_default()
+
+        # Check if a custom font path was successfully determined in __init__
+        if self.font_path:
+            try:
+                # Only call truetype if the path is valid and attempt to load it
+                font_large = ImageFont.truetype(self.font_path, 28)
+                font_medium = ImageFont.truetype(self.font_path, 16)
+            except Exception as e:
+                # Catch any loading error (IOError, OSError, etc.) and stick to defaults
+                print(
+                    f"WARN: Could not load truetype font from {self.font_path}. Error: {e}. Using default font."
+                )
+                # We do nothing here, continuing with the default fonts defined above.
+
+        # 💥 CRITICAL FIX END 💥
+
+        # 3. Draw Header
+        draw.text((30, 30), "🌎 Country Data Summary", fill="#003366", font=font_large)
+
+        # 4. Draw Stats
+        stats_text = f"Total Countries: {total_countries}"
+        draw.text((30, 100), stats_text, fill="#333333", font=font_medium)
+
+        # 5. Draw Top 5 GDP
+        gdp_header = (
+            "Top 5 by Estimated GDP (USD):"  # Removed '\n' here since it won't render
+        )
+        draw.text((30, 140), gdp_header, fill="#333333", font=font_medium)
+
+        y_offset = 170
+        for i, country in enumerate(top_gdp_countries):
+            # Format GDP value nicely
+            gdp_value = (
+                f"{country['estimated_gdp']:.2f}"
+                if country["estimated_gdp"] is not None
+                else "N/A"
+            )
+            text = f"  {i+1}. {country['name']}: ${gdp_value}"
+            draw.text((30, y_offset + i * 25), text, fill="#555555", font=font_medium)
+
+        # 6. Draw Footer (Timestamp)
+        timestamp_str = last_refreshed_at.strftime("%Y-%m-%d %H:%M:%S")
+        footer_text = f"Last Refreshed: {timestamp_str}"
+        draw.text(
+            (width - 300, height - 40), footer_text, fill="#666666", font=font_medium
+        )
+
+        # 7. Save Image
+        image.save(self.IMAGE_PATH)
+        return self.IMAGE_PATH

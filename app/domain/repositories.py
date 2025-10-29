@@ -50,3 +50,24 @@ class AbstractCurrencyService(ABC):
         to the target currency code (e.g., EUR).
         """
         raise NotImplementedError
+
+
+class AbstractImageGenerator(ABC):
+    """Port for generating and saving the country summary image."""
+
+    @abstractmethod
+    def generate_summary_image(
+        self,
+        total_countries: int,
+        top_gdp_countries: List[Dict],
+        last_refreshed_at: datetime,
+    ) -> str:
+        """
+        Generates the summary image and returns the file path.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_image_path(self) -> str:
+        """Returns the expected path to the summary image."""
+        raise NotImplementedError

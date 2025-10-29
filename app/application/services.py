@@ -6,6 +6,7 @@ from app.domain.repositories import (
     AbstractCountryDataSource,
     AbstractCountryPersistence,
     AbstractCurrencyService,
+    AbstractImageGenerator,
 )
 from app.domain.exceptions import DomainError
 
@@ -130,21 +131,37 @@ class RefreshCountriesService:
         self,
         fetch_service: FetchCountriesService,  # Inject the fetching logic
         persistence_repo: AbstractCountryPersistence,
+        image_generator: AbstractImageGenerator,
     ):  # Inject the saving logic
         self.fetch_service = fetch_service
         self.persistence_repo = persistence_repo
+        self.image_generator = image_generator
 
     def execute(self) -> int:
-        """
-        Fetches data, saves it to the database, and returns the count.
-        """
-        # 1. FETCH data using the data source Port/Adapter
+        # 1. Fetch, process, and save countries (existing logic)
         countries = self.fetch_service.execute()
+        count = self.persistence_repo.save_countries(countries)
 
-        # 2. PERSIST data using the persistence Port/Adapter
-        self.persistence_repo.save_countries(countries)
+        # 2. Retrieve Status Data for Image Generation
+        # Get count and last refresh time
+        total, last_refresh_time = self.persistence_repo.get_status()
 
-        return len(countries)
+        # Get top 5 countries by GDP (requires a new repo method or simple sort)
+        # Assuming you add a new repo method: get_top_gdp_countries(limit=5)
+        all_countries = self.persistence_repo.get_countries(
+            filters={}, sort_by="gdp_desc"
+        )
+        top_gdp = [c.__dict__ for c in all_countries[:5]]  # Convert to dict for adapter
+
+        # 3. Generate and Save Image (NEW STEP)
+        if last_refresh_time:
+            self.image_generator.generate_summary_image(
+                total_countries=total,
+                top_gdp_countries=top_gdp,
+                last_refreshed_at=last_refresh_time,
+            )
+
+        return count
 
 
 class GetStatusService:
